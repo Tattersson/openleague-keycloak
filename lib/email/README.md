@@ -4,7 +4,10 @@ This directory contains email client configuration and templates.
 
 ## Files
 
-- `client.ts` - Mailchimp Transactional Email client configuration
+- `client.ts` - Provider-agnostic `sendEmail()` seam: AWS SES, Mailchimp
+  Transactional, plain SMTP (nodemailer), or a dev-only log provider, chosen by
+  `EMAIL_PROVIDER` or inferred (`MAILCHIMP_API_KEY` → `AWS_REGION` → `SMTP_HOST`
+  → log). Templates call `sendEmail()`; the snippets below predate the seam.
 - `templates.ts` - Email templates and sending functions
 
 ## Pattern

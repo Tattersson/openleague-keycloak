@@ -1,0 +1,10 @@
+# TLS terminator in front of the app. In production proxy.ts redirects any
+# request that lacks `X-Forwarded-Proto: https`, so the app must sit behind
+# HTTPS; Caddy sets that header on every proxied request.
+#
+# SITE_ADDRESS is set in docker-compose.yml. `https://localhost` gets a
+# certificate from Caddy's local CA; a public domain gets one from Let's Encrypt.
+{$SITE_ADDRESS} {
+	encode zstd gzip
+	reverse_proxy app:3000
+}

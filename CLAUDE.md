@@ -64,7 +64,7 @@ bun run test:watch __tests__/lib/utils/validation.test.ts
 - **Database**: Prisma 7 ORM with PostgreSQL - parameterized queries prevent SQL injection; config in `prisma/prisma.config.ts`
 - **Validation**: Zod v4 (API differs from v3 — check schemas carefully)
 - **Authentication**: Auth.js v5 with credential provider, bcrypt password hashing
-- **Email**: Provider-agnostic `sendEmail()` seam — AWS SES (recommended) or Mailchimp Transactional, selected via `EMAIL_PROVIDER`
+- **Email**: Provider-agnostic `sendEmail()` seam — AWS SES (recommended), Mailchimp Transactional, or plain SMTP, selected via `EMAIL_PROVIDER`
 
 ### Application Structure
 
@@ -346,11 +346,11 @@ export default async function RosterPage({ params }: { params: { teamId: string 
 ### Email Service Architecture
 
 Email is provider-agnostic behind `sendEmail()` in `lib/email/client.ts`:
-- Providers: AWS SES (`@aws-sdk/client-sesv2`, recommended), Mailchimp Transactional (legacy), and a dev-only `log` provider
-- Selection: `EMAIL_PROVIDER` env var, or inferred from credentials (`MAILCHIMP_API_KEY` → mailchimp, `AWS_REGION` → ses), else `log`. Inference checks Mailchimp **first**, so a leftover `MAILCHIMP_API_KEY` silently beats an SES setup — set `EMAIL_PROVIDER` explicitly when switching
+- Providers: AWS SES (`@aws-sdk/client-sesv2`, recommended), Mailchimp Transactional (legacy), SMTP (`nodemailer`, for self-hosting), and a dev-only `log` provider
+- Selection: `EMAIL_PROVIDER` env var, or inferred from credentials (`MAILCHIMP_API_KEY` → mailchimp, `AWS_REGION` → ses, `SMTP_HOST` → smtp), else `log`. Inference checks Mailchimp **first**, so a leftover `MAILCHIMP_API_KEY` silently beats an SES setup — set `EMAIL_PROVIDER` explicitly when switching
 - SES credentials: `AWS_ROLE_ARN` selects Vercel OIDC via `awsCredentialsProvider` (short-lived STS, no stored secret). The AWS SDK's default chain cannot do this on its own — it reads `AWS_WEB_IDENTITY_TOKEN_FILE`, while Vercel supplies `VERCEL_OIDC_TOKEN` as an env var. Unset `AWS_ROLE_ARN` falls back to the default chain for local dev and CI
 - The app boots without email credentials; in production an unconfigured send throws at send time (never at boot)
-- SES sends one API call per recipient so recipients never see each other's addresses (matches Mailchimp's `preserve_recipients: false` default)
+- SES and SMTP send one message per recipient so recipients never see each other's addresses (matches Mailchimp's `preserve_recipients: false` default)
 - All templates in `lib/email/templates.ts` call `sendEmail()` — never import a provider SDK directly
 
 **Email Templates** (`lib/email/templates.ts`):
@@ -376,7 +376,9 @@ EMAIL_FROM             # Verified sender email address
 
 **Optional Variables**:
 ```bash
-EMAIL_PROVIDER                # ses | mailchimp | log (inferred from credentials when unset)
+EMAIL_PROVIDER                # ses | mailchimp | smtp | log (inferred from credentials when unset)
+SMTP_HOST                      # SMTP server (EMAIL_PROVIDER=smtp); SMTP_PORT (default 587), SMTP_SECURE,
+                               # SMTP_USER / SMTP_PASSWORD (auth only when SMTP_USER is set)
 AWS_REGION                     # SES region (required when EMAIL_PROVIDER=ses)
 AWS_ROLE_ARN                   # SES on Vercel: IAM role assumed via OIDC; omit to use the SDK default chain
 MAILCHIMP_API_KEY              # Mailchimp *Transactional* key (EMAIL_PROVIDER=mailchimp) — a Marketing key 401s

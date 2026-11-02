@@ -10,11 +10,20 @@ const envSchema = z.object({
     NEXTAUTH_SECRET: z.string().min(32, 'NEXTAUTH_SECRET must be at least 32 characters long'),
 
     // Email Service — provider is optional; when unset it is inferred from
-    // credentials (MAILCHIMP_API_KEY -> mailchimp, AWS_REGION -> ses) and
-    // falls back to a log-only provider so the app boots without email creds.
-    EMAIL_PROVIDER: z.enum(['ses', 'mailchimp', 'log']).optional(),
+    // credentials (MAILCHIMP_API_KEY -> mailchimp, AWS_REGION -> ses,
+    // SMTP_HOST -> smtp) and falls back to a log-only provider so the app
+    // boots without email creds.
+    EMAIL_PROVIDER: z.enum(['ses', 'mailchimp', 'smtp', 'log']).optional(),
     MAILCHIMP_API_KEY: z.string().optional(),
     EMAIL_FROM: z.string().email('EMAIL_FROM must be a valid email address'),
+
+    // SMTP transport. SMTP_SECURE defaults to implicit TLS on port 465 and
+    // STARTTLS elsewhere; auth is only sent when SMTP_USER is set.
+    SMTP_HOST: z.string().optional(),
+    SMTP_PORT: z.coerce.number().int().min(1).max(65535).optional(),
+    SMTP_SECURE: z.enum(['true', 'false']).optional(),
+    SMTP_USER: z.string().optional(),
+    SMTP_PASSWORD: z.string().optional(),
 
     // Node Environment
     NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
@@ -78,6 +87,11 @@ function validateEnv() {
             EMAIL_PROVIDER: process.env.EMAIL_PROVIDER as Env['EMAIL_PROVIDER'],
             MAILCHIMP_API_KEY: process.env.MAILCHIMP_API_KEY,
             EMAIL_FROM: process.env.EMAIL_FROM || '',
+            SMTP_HOST: process.env.SMTP_HOST,
+            SMTP_PORT: process.env.SMTP_PORT ? Number(process.env.SMTP_PORT) : undefined,
+            SMTP_SECURE: process.env.SMTP_SECURE as Env['SMTP_SECURE'],
+            SMTP_USER: process.env.SMTP_USER,
+            SMTP_PASSWORD: process.env.SMTP_PASSWORD,
             NODE_ENV: (process.env.NODE_ENV || 'development') as 'development' | 'production' | 'test',
             CRON_SECRET: process.env.CRON_SECRET,
             UPTIME_CHECK_TOKEN: process.env.UPTIME_CHECK_TOKEN,
@@ -127,6 +141,7 @@ function validateEnv() {
             console.error('\n📧 Email provider (optional — emails are logged, not sent, when unconfigured):')
             console.error('   EMAIL_PROVIDER=ses       requires AWS_REGION (+ AWS_ROLE_ARN for Vercel OIDC, or AWS credentials)')
             console.error('   EMAIL_PROVIDER=mailchimp requires MAILCHIMP_API_KEY')
+            console.error('   EMAIL_PROVIDER=smtp      requires SMTP_HOST (+ SMTP_PORT, SMTP_SECURE, SMTP_USER/SMTP_PASSWORD as needed)')
             console.error('\n💡 Copy .env.example to .env.local and fill in the values')
 
             process.exit(1)
@@ -147,6 +162,10 @@ function assertEmailProviderConfig(env: z.infer<typeof envSchema>): void {
     }
     if (env.EMAIL_PROVIDER === 'ses' && !env.AWS_REGION) {
         console.error('🚨 EMAIL_PROVIDER=ses requires AWS_REGION to be set (credentials via AWS_ROLE_ARN + Vercel OIDC, or AWS env vars)')
+        process.exit(1)
+    }
+    if (env.EMAIL_PROVIDER === 'smtp' && !env.SMTP_HOST) {
+        console.error('🚨 EMAIL_PROVIDER=smtp requires SMTP_HOST to be set')
         process.exit(1)
     }
 }

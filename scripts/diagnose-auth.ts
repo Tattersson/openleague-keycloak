@@ -97,6 +97,7 @@ async function runDiagnostics() {
   console.log(`   EMAIL_PROVIDER: ${env.EMAIL_PROVIDER ?? '(unset — inferred from credentials)'}`)
   console.log(`   MAILCHIMP_API_KEY: ${env.MAILCHIMP_API_KEY ? '✅ Set' : '— not set'}`)
   console.log(`   AWS_REGION (SES): ${env.AWS_REGION ?? '— not set'}`)
+  console.log(`   SMTP_HOST (SMTP): ${env.SMTP_HOST ? `${env.SMTP_HOST}:${env.SMTP_PORT ?? 587}` : '— not set'}`)
   console.log(`   EMAIL_FROM: ${env.EMAIL_FROM}`)
 
   // Check optional analytics

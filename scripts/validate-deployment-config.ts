@@ -208,7 +208,7 @@ export async function validateDeploymentConfig(rootDir = process.cwd()): Promise
     requireCondition(failures, envExample.includes(`${envName}=`), `.env.example must document ${envName}.`);
   }
 
-  for (const envName of ['OPENLEAGUE_RUN_MIGRATIONS_ON_BUILD', DOCS_PAGES_DOMAIN_ENV, ...Object.values(UPTIME_CHECK_ENV_NAMES)]) {
+  for (const envName of ['OPENLEAGUE_RUN_MIGRATIONS_ON_BUILD', 'SMTP_HOST', DOCS_PAGES_DOMAIN_ENV, ...Object.values(UPTIME_CHECK_ENV_NAMES)]) {
     requireCondition(failures, envExample.includes(envName), `.env.example must document optional ${envName}.`);
   }
 

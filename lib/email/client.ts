@@ -1,13 +1,15 @@
 import Mailchimp from "@mailchimp/mailchimp_transactional";
 import { SESv2Client, SendEmailCommand } from "@aws-sdk/client-sesv2";
 import { awsCredentialsProvider } from "@vercel/oidc-aws-credentials-provider";
+import nodemailer, { type Transporter } from "nodemailer";
 import { env, isProduction } from "@/lib/env";
 
 /**
  * Provider-agnostic email seam. All application code (templates, actions,
  * cron jobs) sends through {@link sendEmail}; the transport (AWS SES,
- * Mailchimp Transactional, or a dev/test logger) is resolved from the
- * environment at send time, so the app boots without email credentials.
+ * Mailchimp Transactional, a plain SMTP server, or a dev/test logger) is
+ * resolved from the environment at send time, so the app boots without
+ * email credentials.
  */
 
 export interface EmailRecipient {
@@ -22,17 +24,18 @@ export interface EmailMessage {
   text?: string;
 }
 
-export type EmailProvider = "ses" | "mailchimp" | "log";
+export type EmailProvider = "ses" | "mailchimp" | "smtp" | "log";
 
 /**
  * Resolve the active provider: explicit EMAIL_PROVIDER wins; otherwise infer
  * from configured credentials (Mailchimp key for backwards compatibility,
- * then AWS region), falling back to the log provider.
+ * then AWS region, then SMTP host), falling back to the log provider.
  */
 export function resolveEmailProvider(): EmailProvider {
   if (env.EMAIL_PROVIDER) return env.EMAIL_PROVIDER;
   if (env.MAILCHIMP_API_KEY) return "mailchimp";
   if (env.AWS_REGION) return "ses";
+  if (env.SMTP_HOST) return "smtp";
   return "log";
 }
 
@@ -147,6 +150,57 @@ async function sendViaMailchimp(message: EmailMessage): Promise<void> {
   });
 }
 
+let smtpTransport: Transporter | null = null;
+
+function getSmtpTransport(): Transporter {
+  if (smtpTransport) return smtpTransport;
+  if (!env.SMTP_HOST) {
+    throw new Error("EMAIL_PROVIDER is 'smtp' but SMTP_HOST is not set");
+  }
+  const port = env.SMTP_PORT ?? 587;
+  // Implicit TLS on 465 by convention; any other port negotiates STARTTLS
+  // when the server offers it. SMTP_SECURE overrides for nonstandard setups.
+  const secure = env.SMTP_SECURE ? env.SMTP_SECURE === "true" : port === 465;
+  smtpTransport = nodemailer.createTransport({
+    // Pooled: the per-recipient fan-out below would otherwise open one
+    // connection per recipient at once, which SMTP servers throttle or reject.
+    pool: true,
+    host: env.SMTP_HOST,
+    port,
+    secure,
+    // Unauthenticated relays (and local catchers like Mailpit) take no auth.
+    ...(env.SMTP_USER ? { auth: { user: env.SMTP_USER, pass: env.SMTP_PASSWORD ?? "" } } : {}),
+  });
+  return smtpTransport;
+}
+
+async function sendViaSmtp(message: EmailMessage): Promise<void> {
+  const transport = getSmtpTransport();
+  // One message per recipient, like SES, so addresses are never shared.
+  // Addresses go in as objects so nodemailer does the header encoding.
+  const results = await Promise.allSettled(
+    message.to.map((recipient) =>
+      transport.sendMail({
+        from: env.EMAIL_FROM,
+        to: recipient.name ? { name: recipient.name, address: recipient.email } : recipient.email,
+        subject: message.subject,
+        html: message.html,
+        ...(message.text ? { text: message.text } : {}),
+      })
+    )
+  );
+
+  const failures = results.filter(
+    (result): result is PromiseRejectedResult => result.status === "rejected"
+  );
+  if (failures.length > 0) {
+    failures.forEach((failure) => console.error("SMTP send failed:", failure.reason));
+    throw new Error(
+      `SMTP failed to send to ${failures.length} of ${message.to.length} recipient(s)`
+    );
+  }
+}
+
 function sendViaLog(message: EmailMessage): void {
   if (isProduction) {
     // Loud failure: email is not configured in production. Callers decide
@@ -174,6 +228,8 @@ export async function sendEmail(message: EmailMessage): Promise<void> {
       return sendViaSes(message);
     case "mailchimp":
       return sendViaMailchimp(message);
+    case "smtp":
+      return sendViaSmtp(message);
     case "log":
       sendViaLog(message);
       return;

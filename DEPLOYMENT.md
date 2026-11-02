@@ -105,6 +105,22 @@ Preview deployments skip automatic migration deployment by default. Set `OPENLEA
    with `401 Invalid_Key`; sending also requires a paid Transactional plan.
 2. Set it as `MAILCHIMP_API_KEY` in Vercel and configure `EMAIL_FROM`.
 
+#### SMTP (any mail server)
+
+For self-hosting, or any provider that offers SMTP submission (your own mail
+server, Microsoft 365, Google Workspace relay, Mailgun, Postmark, ...):
+
+1. Set `EMAIL_PROVIDER=smtp` and `SMTP_HOST`. `SMTP_PORT` defaults to `587`
+   (STARTTLS); use `465` for implicit TLS, or force either with
+   `SMTP_SECURE=true|false`.
+2. Set `SMTP_USER` / `SMTP_PASSWORD` if the server requires authentication;
+   omit them for an unauthenticated relay.
+3. Make sure the server is allowed to send as `EMAIL_FROM` (SPF/DKIM for its
+   domain), then **redeploy**.
+
+Each recipient gets their own message, as with SES. For local testing, point
+`SMTP_HOST=localhost`, `SMTP_PORT=1025` at [Mailpit](https://mailpit.axllent.org).
+
 ### Security Configuration
 
 The `vercel.json` file includes security headers:
@@ -285,36 +301,42 @@ Set `UPTIME_CHECK_TOKEN` as both a Vercel environment variable and a GitHub Acti
 
 ### Docker Deployment
 
-For self-hosting or other cloud providers:
+For a local or test machine, `docker-compose.yml` runs the whole stack from
+the repository's `Dockerfile`:
 
-```dockerfile
-# Dockerfile
-FROM oven/bun:1-alpine
-
-WORKDIR /app
-
-# Copy package files and install dependencies to leverage Docker cache
-COPY package.json bun.lock ./
-RUN bun install --frozen-lockfile
-
-# Copy source code
-COPY . .
-
-# Generate Prisma client and build
-RUN bunx prisma generate
-RUN bun run build
-
-EXPOSE 3000
-
-# Start application
-CMD ["bun", "run", "start"]
-```
+| Service | Purpose |
+| ------- | ------- |
+| `db` | PostgreSQL 16 (data in the `db-data` volume; `127.0.0.1:5432` on the host) |
+| `migrate` | Runs `bun run db:migrate:deploy` once, then exits |
+| `app` | The Next.js app (`bun run start`), started after migrations succeed |
+| `caddy` | HTTPS on ports 80/443 in front of `app` |
 
 ```bash
-# Build and run
-docker build -t openleague .
-docker run -p 3000:3000 --env-file .env.production openleague
+# 1. Copy .env.example to .env.local and set at least NEXTAUTH_SECRET
+#    (32+ chars: openssl rand -base64 32), EMAIL_FROM and the SMTP_* values
+# 2. Build and start
+docker compose up -d --build
+# 3. Open https://localhost
 ```
+
+- **Settings come from `.env.local`**, the same file `bun run dev` uses. It is
+  passed to the app as-is, except `DATABASE_URL` (always the bundled
+  PostgreSQL, user/password/database `openleague`) and `NEXTAUTH_URL` (always
+  `https://localhost`), which the compose file sets. The database credentials
+  are fixed test values, so this setup is meant for test machines, not a
+  public server.
+- **HTTPS is required.** In production `proxy.ts` redirects any request whose
+  `X-Forwarded-Proto` is not `https`, so the app is only served through Caddy.
+  Caddy issues a `localhost` certificate from its own local CA; the browser
+  warns until you trust it
+  (`docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt .`).
+- **Email** uses whatever `.env.local` configures; with `SMTP_HOST` set the
+  SMTP provider is selected automatically.
+- `NEXT_PUBLIC_*` values are compiled into the client bundle; pass them as
+  build args (`docker compose build --build-arg NEXT_PUBLIC_...=...`).
+- Cron routes (`/api/cron/*`) are triggered by Vercel Cron on Vercel; when
+  self-hosting, call them from a host scheduler with
+  `Authorization: Bearer $CRON_SECRET`.
 
 ### AWS/DigitalOcean/Railway Deployment
 
